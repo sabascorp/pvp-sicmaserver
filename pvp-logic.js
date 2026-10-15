@@ -64,7 +64,7 @@ const LETRAS_CODIGO = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sin 0/O/1/I para qu
 function crearPVP(io, opciones) {
   const cfg = Object.assign({
     secreto: '',
-    salasRapidas: 5,          // salas abiertas por operación (partidas "Buscar rival")
+    salasRapidas: 15,          // salas abiertas por operación (partidas "Buscar rival")
     maxPrivadas: 200,         // tope de salas con código al mismo tiempo
     cuentaMs: 5000,           // tiempo entre "los dos listos" y el inicio real
     inactivoMs: 5 * 60 * 1000, // en la sala sin jugar: se libera el lugar
