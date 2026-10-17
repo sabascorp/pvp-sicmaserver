@@ -13,7 +13,7 @@ const crypto = require('crypto');
 
 // ------------------------------------------------------------
 // Token firmado por PHP:  base64url(JSON).base64url(HMAC-SHA256(base64url(JSON), secreto))
-// JSON = { u: usuario, n: nombre corto para mostrar, exp: segundos Unix }
+// JSON = { u: usuario, n: nombre corto para mostrar, e: escuela (opcional), exp: segundos Unix }
 // ------------------------------------------------------------
 function verificarToken(token, secreto, ahoraMs) {
   if (typeof token !== 'string' || token.length < 10 || token.length > 600) return null;
@@ -29,7 +29,7 @@ function verificarToken(token, secreto, ahoraMs) {
   try { p = JSON.parse(Buffer.from(partes[0], 'base64').toString('utf8')); } catch (e) { return null; }
   if (!p || typeof p.u !== 'string' || typeof p.n !== 'string' || typeof p.exp !== 'number') return null;
   if (!p.u || p.exp * 1000 < ahoraMs) return null;
-  return { u: p.u.slice(0, 60), n: p.n.slice(0, 30) };
+  return { u: p.u.slice(0, 60), n: p.n.slice(0, 30), e: typeof p.e === 'string' ? p.e.trim().slice(0, 80) : '' };
 }
 
 // ------------------------------------------------------------
@@ -90,7 +90,7 @@ function crearPVP(io, opciones) {
         tipo: sala.tipo,
         codigo: sala.codigo || null,
         estado: sala.estado,
-        jugadores: sala.jugadores.map((x) => ({ nombre: x.n, listo: x.listo, yo: x === j })),
+        jugadores: sala.jugadores.map((x) => ({ nombre: x.n, escuela: x.e, listo: x.listo, yo: x === j })),
       });
     }
   }
@@ -258,7 +258,7 @@ function crearPVP(io, opciones) {
   io.on('connection', (socket) => {
     const u = socket.data.usuario;
     const j = {
-      socket, u: u.u, n: u.n, sala: null, listo: false, termino: false, yaEnvioFinal: false,
+      socket, u: u.u, n: u.n, e: u.e || '', sala: null, listo: false, termino: false, yaEnvioFinal: false,
       ultimo: cfg.ahora(), ultimoStats: 0, ventana: cfg.ahora(), eventos: 0,
     };
 
