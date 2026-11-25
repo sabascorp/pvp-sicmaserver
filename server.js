@@ -9,6 +9,7 @@ const http = require('http');
 const express = require('express');
 const { Server } = require('socket.io');
 const { crearPVP } = require('./pvp-logic');
+const { crearArena } = require('./arena-logic');   // Arena: equipos (Duo, Trio, Squad)
 
 const PORT = Number(process.env.PORT) || 3000;
 const SECRETO = process.env.PVP_SECRET || '';
@@ -41,17 +42,24 @@ const pvp = crearPVP(io, {
   log: (...a) => console.log('[pvp]', ...a),
 });
 
+// Arena (equipos): archivo nuevo, no toca el PVP de siempre
+const arena = crearArena(io, {
+  secreto: SECRETO,
+  log: (...a) => console.log('[arena]', ...a),
+});
+
 // La página de PVP llama a /health al entrar para "despertar" el servicio gratuito
 app.get('/', (_req, res) => res.type('text').send('SpeedMathSprint PVP 2.1 en línea'));
 app.get('/health', (_req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json(Object.assign({ ok: true }, pvp.estado()));
+  res.json(Object.assign({ ok: true }, pvp.estado(), arena.estado()));
 });
 
 servidor.listen(PORT, () => console.log('PVP escuchando en el puerto ' + PORT));
 
 function apagar() {
   pvp.cerrar();
+  arena.cerrar();
   io.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 }
