@@ -45,6 +45,7 @@ const pvp = crearPVP(io, {
 // Arena (equipos): archivo nuevo, no toca el PVP de siempre
 const arena = crearArena(io, {
   secreto: SECRETO,
+  acomodoMs: Math.max(5, Math.min(120, Number(process.env.ACOMODO_SEGUNDOS) || 30)) * 1000,   // segundos para acomodarse en equipos (variable opcional en Render)
   log: (...a) => console.log('[arena]', ...a),
 });
 
