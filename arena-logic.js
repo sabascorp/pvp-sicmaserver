@@ -18,6 +18,7 @@ function crearArena(io, opciones) {
     secreto: '',
     maxSalas: 100,            // salas con código al mismo tiempo
     cuentaMs: 5000,           // tiempo entre "todos listos" y el inicio real
+    acomodoMs: 30000,         // tiempo para acomodarse en equipos cuando la sala se llena
     inactivoMs: 5 * 60 * 1000,
     barridoMs: 30000,
     eventosPorSegundo: 40,
@@ -37,6 +38,7 @@ function crearArena(io, opciones) {
   const capacidad = (sala) => sala.tam * 2;
   const delEquipo = (sala, eq) => sala.jugadores.filter((x) => x.eq === eq);
   const llena = (sala) => sala.jugadores.length === capacidad(sala) && delEquipo(sala, 0).length === sala.tam && delEquipo(sala, 1).length === sala.tam;
+  const parejos = (sala) => sala.jugadores.length === capacidad(sala) && delEquipo(sala, 0).length === sala.tam && delEquipo(sala, 1).length === sala.tam;
   const otros = (sala, j) => sala.jugadores.filter((x) => x !== j);
 
   function enviarSala(sala) {
@@ -46,8 +48,12 @@ function crearArena(io, opciones) {
         estado: sala.estado,
         tam: sala.tam,
         jugadores: sala.jugadores.map((x) => ({
-          nombre: x.n, escuela: x.e, nv: x.nv, eq: x.eq, listo: x.listo, yo: x === j, anfitrion: x === sala.anfitrion,
+          nombre: x.n, escuela: x.e, nv: x.nv, eq: x.eq, listo: x.listo, conforme: !!x.conforme, yo: x === j, anfitrion: x === sala.anfitrion,
         })),
+        acomodoFin: sala.acomodoFin || null,   // hora del servidor en que termina el acomodo (null = no hay acomodo)
+        bloqueada: !!sala.bloqueada,           // equipos fijos: ya solo falta dar "Listo"
+        parejos: parejos(sala),
+        acomodoSeg: Math.round(cfg.acomodoMs / 1000),
       });
     }
   }
@@ -62,8 +68,62 @@ function crearArena(io, opciones) {
   }
 
   function reiniciarSala(sala) {
+    cancelarAcomodo(sala);
     sala.estado = 'espera';
-    sala.jugadores.forEach((x) => { x.listo = false; x.termino = false; x.yaEnvioFinal = false; });
+    sala.bloqueada = parejos(sala);   // si siguen completos, los mismos equipos juegan la revancha
+    sala.jugadores.forEach((x) => { x.listo = false; x.conforme = false; x.termino = false; x.yaEnvioFinal = false; });
+  }
+
+  // ---------- acomodo de equipos (al llenarse la sala) ----------
+  function cancelarAcomodo(sala) {
+    if (sala.timerAcomodo) { clearTimeout(sala.timerAcomodo); sala.timerAcomodo = null; }
+    sala.acomodoFin = null;
+    sala.jugadores.forEach((x) => { x.conforme = false; });
+  }
+
+  function barajar(lista) {
+    for (let i = lista.length - 1; i > 0; i--) {
+      const k = crypto.randomInt(i + 1);
+      [lista[i], lista[k]] = [lista[k], lista[i]];
+    }
+    return lista;
+  }
+
+  // Sala llena: se reparten al azar en dos equipos parejos y empiezan los segundos para acomodarse
+  function comenzarAcomodo(sala) {
+    cancelarAcomodo(sala);
+    sala.bloqueada = false;
+    barajar(sala.jugadores.slice()).forEach((x, i) => { x.eq = i < sala.tam ? 0 : 1; x.movidoMs = 0; x.listo = false; });
+    sala.acomodoFin = cfg.ahora() + cfg.acomodoMs;
+    sala.timerAcomodo = setTimeout(() => finalizarAcomodo(sala), cfg.acomodoMs);
+    if (sala.timerAcomodo.unref) sala.timerAcomodo.unref();
+  }
+
+  // Termina el acomodo (se acabó el tiempo o todos dieron "Conforme"): si quedaron dispares, el sistema los iguala
+  function finalizarAcomodo(sala) {
+    if (!sala.acomodoFin) return;
+    cancelarAcomodo(sala);
+    if (sala.jugadores.length === capacidad(sala)) {
+      for (const eq of [0, 1]) {
+        const exceso = delEquipo(sala, eq).length - sala.tam;
+        if (exceso > 0) {
+          // pasan al otro equipo los que se cambiaron más recientemente (a igual hora, al azar)
+          const candidatos = barajar(delEquipo(sala, eq)).sort((a, b) => (b.movidoMs || 0) - (a.movidoMs || 0));
+          candidatos.slice(0, exceso).forEach((x) => { x.eq = 1 - eq; });
+        }
+      }
+      sala.bloqueada = true;
+    }
+    sala.jugadores.forEach((x) => { x.listo = false; });
+    enviarSala(sala);
+  }
+
+  function conforme(j) {
+    const sala = j.sala;
+    if (!sala || sala.estado !== 'espera' || !sala.acomodoFin || !parejos(sala)) return;
+    j.conforme = true;
+    if (sala.jugadores.every((x) => x.conforme)) finalizarAcomodo(sala);
+    else enviarSala(sala);
   }
 
   // ---------- entrar y salir ----------
@@ -82,7 +142,7 @@ function crearArena(io, opciones) {
     j.listo = false;
     j.termino = false;
 
-    if (sala.jugadores.length === 0) { salas.delete(sala.codigo); return; }
+    if (sala.jugadores.length === 0) { cancelarAcomodo(sala); salas.delete(sala.codigo); return; }
     if (eraAnfitrion) sala.anfitrion = sala.jugadores[0];
 
     if (enCuenta) {
@@ -91,6 +151,9 @@ function crearArena(io, opciones) {
       // La partida sigue para los que quedan; se cierra cuando todos ellos terminan
       if (sala.jugadores.every((x) => x.termino)) reiniciarSala(sala);
     } else {
+      // alguien se fue antes de empezar: la sala ya no está completa, se cancela el acomodo y los equipos quedan sueltos
+      cancelarAcomodo(sala);
+      sala.bloqueada = false;
       sala.jugadores.forEach((x) => { x.listo = false; });
     }
     enviarSala(sala);
@@ -135,16 +198,18 @@ function crearArena(io, opciones) {
     j.sala = sala;
     j.ultimo = cfg.ahora();
     responder({ ok: true, codigo: sala.codigo, tam: sala.tam });
+    if (sala.jugadores.length === capacidad(sala)) comenzarAcomodo(sala);
     enviarSala(sala);
   }
 
   function cambiarEquipo(j, datos) {
     const sala = j.sala;
-    if (!sala || sala.estado !== 'espera') return;
+    if (!sala || sala.estado !== 'espera' || !sala.acomodoFin) return;   // solo durante el acomodo, sin límite de lugares
     const eq = entero(datos && datos.eq, 0, 1);
-    if (eq === j.eq || delEquipo(sala, eq).length >= sala.tam) return;
+    if (eq === j.eq) return;
     j.eq = eq;
-    sala.jugadores.forEach((x) => { x.listo = false; }); // si cambian los equipos, hay que volver a confirmar
+    j.movidoMs = cfg.ahora();
+    sala.jugadores.forEach((x) => { x.conforme = false; x.listo = false; }); // si cambian los equipos, hay que volver a confirmar
     enviarSala(sala);
   }
 
@@ -165,7 +230,7 @@ function crearArena(io, opciones) {
 
   function listo(j) {
     const sala = j.sala;
-    if (!sala || sala.estado !== 'espera' || !llena(sala)) return;
+    if (!sala || sala.estado !== 'espera' || !llena(sala) || !sala.bloqueada) return;
     j.listo = true;
     if (sala.jugadores.every((x) => x.listo)) iniciar(sala);
     else enviarSala(sala);
@@ -247,6 +312,7 @@ function crearArena(io, opciones) {
     on('unirse', (d, ack) => unirse(j, d, ack));
     on('equipo', (d) => cambiarEquipo(j, d));
     on('listo', () => listo(j));
+    on('conforme', () => conforme(j));
     on('stats', (d) => stats(j, d));
     on('final', (d) => final(j, d));
     on('salir', () => salir(j));
